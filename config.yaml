@@ -1,0 +1,67 @@
+# Improved SLM Training Configuration
+# Single source of truth for all scripts (train, evaluate, export)
+
+# Model architecture
+model:
+  vocab_size: 50257
+  block_size: 128
+  n_layer: 6
+  n_head: 6
+  n_embd: 384
+  dropout: 0.1
+  bias: true
+
+# Training hyperparameters (improved config)
+training:
+  learning_rate: 1.0e-4
+  max_iters: 80000
+  warmup_steps: 1000
+  min_lr: 1.0e-5  # Fixed: min_lr < learning_rate for proper cosine decay
+  batch_size: 32
+  gradient_accumulation_steps: 32
+  max_grad_norm: 0.5
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.95
+  eps: 1.0e-9
+
+# Evaluation settings
+evaluation:
+  eval_iters: 500
+  eval_interval: 500  # How often to run evaluation during training
+
+# Data paths
+data:
+  train_bin: "train.bin"
+  validation_bin: "validation.bin"
+  dataset_name: "roneneldan/TinyStories"
+
+# Checkpoint paths
+checkpoints:
+  best_model: "best_model.pt"
+  latest_model: "latest_model.pt"
+
+# Export settings
+export:
+  onnx_path: "slm_model.onnx"
+  opset_version: 14
+
+# Experiment tracking
+wandb:
+  enabled: true
+  project: "slm-training"
+  run_name_prefix: "slm-improved"
+
+# Device settings
+device:
+  type: "auto"  # auto, cuda, cpu
+  dtype: "auto"  # auto, float32, bfloat16, float16
+
+# Generation settings (for evaluation)
+generation:
+  max_new_tokens: 100
+  temperature: 0.7
+  top_k: null
+
+# Seed for reproducibility
+seed: 42

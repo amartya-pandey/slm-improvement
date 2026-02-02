@@ -1,0 +1,21 @@
+# Core dependencies
+torch>=2.0.0
+numpy>=1.24.0
+tqdm>=4.65.0
+pyyaml>=6.0
+
+# Tokenization
+tiktoken>=0.5.0
+
+# Dataset loading
+datasets>=2.14.0
+
+# Evaluation
+nltk>=3.8.0
+
+# ONNX export (optional)
+onnx>=1.14.0
+onnxruntime>=1.15.0
+
+# Experiment tracking (optional)
+wandb>=0.15.0
