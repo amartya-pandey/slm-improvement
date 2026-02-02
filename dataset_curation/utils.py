@@ -9,7 +9,6 @@ import html
 import re
 from typing import Iterable
 
-
 _TAG_RE = re.compile(r"<[^>]+>")
 _WHITESPACE_RE = re.compile(r"\s+")
 

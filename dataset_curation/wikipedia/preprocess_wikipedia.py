@@ -155,7 +155,7 @@ def main():
         min_alpha_ratio=args.min_alpha_ratio,
     )
 
-    print("\nPreprocessing complete:")
+    print("\n Preprocessing complete:")
     for k, v in stats.items():
         print(f"  {k}: {v}")
 
