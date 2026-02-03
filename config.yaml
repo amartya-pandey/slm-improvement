@@ -32,14 +32,19 @@ evaluation:
 
 # Data paths
 data:
-  train_bin: "train.bin"
-  validation_bin: "validation.bin"
-  dataset_name: "roneneldan/TinyStories"
+  wikipedia_jsonl: "data/wikipedia.jsonl"
+  openwebtext_jsonl: "data/openwebtext.jsonl"
+  tokenizer_json: "tokenizer/tokenizer.json"
+  wikiratio: 0.6
+  curriculum:
+    phase1_ratio: 0.6
+    phase2_ratio: 0.4
+    phase2_start: 40000
 
 # Checkpoint paths
 checkpoints:
-  best_model: "best_model.pt"
-  latest_model: "latest_model.pt"
+  best_model: "checkpoints/best_model.pt"
+  latest_model: "checkpoints/latest_model.pt"
 
 # Export settings
 export:

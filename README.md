@@ -1,6 +1,6 @@
 # Small Language Model (SLM) Training Pipeline
 
-Modular training pipeline for a GPT-style Small Language Model on TinyStories dataset.
+Modular training pipeline for a GPT-style Small Language Model using a streaming mixture of Wikipedia and OpenWebText.
 
 ## Project Structure
 
@@ -24,13 +24,20 @@ slm-improvement/
 pip install -r requirements.txt
 ```
 
-### 2. Prepare Data (Optional - runs automatically on first train)
+### 2. Preprocess Datasets
 
 ```bash
-python data.py --dataset roneneldan/TinyStories
+python dataset_curation/wikipedia/preprocess_wikipedia.py --output data/wikipedia.jsonl
+python dataset_curation/openwebtext/preprocess_openwebtext.py --output data/openwebtext.jsonl
 ```
 
-### 3. Train Model
+### 3. Train a Shared Tokenizer
+
+```bash
+python dataset_curation/train_tokenizer.py --output-dir tokenizer
+```
+
+### 4. Train Model
 
 ```bash
 # Basic training with wandb logging
@@ -91,6 +98,17 @@ training:
   min_lr: 1.0e-5
   batch_size: 32
   gradient_accumulation_steps: 32
+
+# Data mixture
+data:
+  wikipedia_jsonl: "data/wikipedia.jsonl"
+  openwebtext_jsonl: "data/openwebtext.jsonl"
+  tokenizer_json: "tokenizer/tokenizer.json"
+  wikiratio: 0.6
+  curriculum:
+    phase1_ratio: 0.6
+    phase2_ratio: 0.4
+    phase2_start: 40000
 ```
 
 ## Training Progress

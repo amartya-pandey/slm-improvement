@@ -5,7 +5,8 @@ tqdm>=4.65.0
 pyyaml>=6.0
 
 # Tokenization
-tiktoken>=0.5.0
+tokenizers>=0.15.0
+sentencepiece>=0.1.99
 
 # Dataset loading
 datasets>=2.14.0

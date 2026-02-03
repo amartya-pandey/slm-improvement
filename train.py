@@ -21,7 +21,8 @@ import yaml
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from tqdm.auto import tqdm
 
-from data import check_data_ready, get_batch, prepare_dataset
+from dataset_curation.data import MixtureDataset, get_batch
+from dataset_curation.tokenizer import load_tokenizer
 from model import GPT, GPTConfig, load_checkpoint, save_checkpoint
 
 
@@ -82,6 +83,8 @@ def estimate_loss(
     device: torch.device,
     device_type: str,
     ctx,
+    mixture: MixtureDataset,
+    tokenizer,
 ) -> dict:
     """
     Estimate loss on train and validation sets.
@@ -95,15 +98,12 @@ def estimate_loss(
     eval_iters = config["evaluation"]["eval_iters"]
     batch_size = config["training"]["batch_size"]
     block_size = config["model"]["block_size"]
-    train_bin = config["data"]["train_bin"]
-    val_bin = config["data"]["validation_bin"]
-
     with torch.inference_mode():
         for split in ["train", "val"]:
             losses = torch.zeros(eval_iters)
             for k in range(eval_iters):
-                X, Y = get_batch(
-                    split, batch_size, block_size, device, device_type, train_bin, val_bin
+                X, Y, _ = get_batch(
+                    mixture, tokenizer, batch_size, block_size, device, device_type
                 )
                 with ctx:
                     _, loss = model(X, Y)
@@ -210,18 +210,23 @@ def train(config_path: str, use_wandb: bool = True) -> None:
     if device_type == "cuda":
         torch.cuda.manual_seed(config.get("seed", 42))
 
-    # Prepare data if needed
+    # Setup data + tokenizer
     data_cfg = config["data"]
-    if not check_data_ready(data_cfg["train_bin"], data_cfg["validation_bin"]):
-        print("Preparing dataset...")
-        prepare_dataset(
-            dataset_name=data_cfg["dataset_name"],
-            train_bin_path=data_cfg["train_bin"],
-            validation_bin_path=data_cfg["validation_bin"],
-        )
+    mixture = MixtureDataset(
+        wikipedia_jsonl=data_cfg["wikipedia_jsonl"],
+        openwebtext_jsonl=data_cfg["openwebtext_jsonl"],
+        wikiratio=data_cfg.get("wikiratio", 0.6),
+    )
+    tokenizer = load_tokenizer(data_cfg["tokenizer_json"])
 
     # Create model
     model_config = GPTConfig.from_dict(config["model"])
+    tokenizer_vocab = tokenizer.get_vocab_size()
+    if model_config.vocab_size != tokenizer_vocab:
+        print(
+            f"Adjusting vocab_size from {model_config.vocab_size} to {tokenizer_vocab}"
+        )
+        model_config.vocab_size = tokenizer_vocab
     model = GPT(model_config)
     model = model.to(device)
     print(f"Model parameters: {model.get_num_params():,}")
@@ -242,6 +247,12 @@ def train(config_path: str, use_wandb: bool = True) -> None:
     block_size = config["model"]["block_size"]
     gradient_accumulation_steps = train_cfg["gradient_accumulation_steps"]
     eval_interval = eval_cfg.get("eval_interval", eval_cfg["eval_iters"])
+
+    curriculum_cfg = data_cfg.get("curriculum", {})
+    phase2_start = curriculum_cfg.get("phase2_start", max_iters // 2)
+    phase1_ratio = curriculum_cfg.get("phase1_ratio", data_cfg.get("wikiratio", 0.6))
+    phase2_ratio = curriculum_cfg.get("phase2_ratio", 0.4)
+    current_ratio = None
 
     # Initialize tracking variables
     start_epoch = 0
@@ -283,14 +294,19 @@ def train(config_path: str, use_wandb: bool = True) -> None:
     # Training loop
     for epoch in tqdm(range(start_epoch, max_iters), initial=start_epoch, total=max_iters):
         # Get batch
-        X, y = get_batch(
-            "train",
+        # Curriculum schedule for mixture ratio
+        target_ratio = phase2_ratio if epoch >= phase2_start else phase1_ratio
+        if current_ratio != target_ratio:
+            mixture.set_wikiratio(target_ratio)
+            current_ratio = target_ratio
+
+        X, y, sources = get_batch(
+            mixture,
+            tokenizer,
             batch_size,
             block_size,
             device,
             device_type,
-            data_cfg["train_bin"],
-            data_cfg["validation_bin"],
         )
 
         # Forward pass
@@ -319,18 +335,25 @@ def train(config_path: str, use_wandb: bool = True) -> None:
 
         # Log to wandb
         if wandb is not None:
+            wiki_count = sources.count("wikipedia")
+            owt_count = sources.count("openwebtext")
             wandb.log(
                 {
                     "epoch": epoch,
                     "step_loss": loss_value,
                     "learning_rate": optimizer.param_groups[0]["lr"],
                     "epoch_avg_loss": epoch_loss / epoch_steps if epoch_steps > 0 else 0,
+                    "wiki_batch_fraction": wiki_count / max(len(sources), 1),
+                    "openwebtext_batch_fraction": owt_count / max(len(sources), 1),
+                    "wikiratio": current_ratio,
                 }
             )
 
         # Evaluation and checkpointing
         if epoch % eval_interval == 0 and epoch != 0:
-            losses = estimate_loss(model, config, device, device_type, ctx)
+            losses = estimate_loss(
+                model, config, device, device_type, ctx, mixture, tokenizer
+            )
             train_loss = losses["train"].item()
             val_loss = losses["val"].item()
 

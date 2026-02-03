@@ -22,7 +22,8 @@ import nltk
 import torch
 import yaml
 
-from data import check_data_ready, encode_text, get_batch, get_tokenizer
+from dataset_curation.data import MixtureDataset, get_batch
+from dataset_curation.tokenizer import decode_ids, encode_text, load_tokenizer
 from model import GPT, GPTConfig
 
 
@@ -80,6 +81,8 @@ def estimate_loss(
     device: torch.device,
     device_type: str,
     ctx,
+    mixture: MixtureDataset,
+    tokenizer,
 ) -> dict:
     """Estimate loss on train and validation sets."""
     out = {}
@@ -88,15 +91,12 @@ def estimate_loss(
     eval_iters = config["evaluation"]["eval_iters"]
     batch_size = config["training"]["batch_size"]
     block_size = config["model"]["block_size"]
-    train_bin = config["data"]["train_bin"]
-    val_bin = config["data"]["validation_bin"]
-
     with torch.inference_mode():
         for split in ["train", "val"]:
             losses = torch.zeros(eval_iters)
             for k in range(eval_iters):
-                X, Y = get_batch(
-                    split, batch_size, block_size, device, device_type, train_bin, val_bin
+                X, Y, _ = get_batch(
+                    mixture, tokenizer, batch_size, block_size, device, device_type
                 )
                 with ctx:
                     _, loss = model(X, Y)
@@ -158,6 +158,7 @@ def generate_text(
     model: GPT,
     prompt: str,
     device: torch.device,
+    tokenizer,
     max_new_tokens: int = 100,
     temperature: float = 0.7,
     top_k: int = None,
@@ -177,12 +178,10 @@ def generate_text(
         Generated text string
     """
     model.eval()
-    enc = get_tokenizer()
-
     with torch.no_grad():
-        context = torch.tensor(encode_text(prompt)).unsqueeze(0).to(device)
+        context = torch.tensor(encode_text(tokenizer, prompt)).unsqueeze(0).to(device)
         generated = model.generate(context, max_new_tokens, temperature=temperature, top_k=top_k)
-        output_text = enc.decode(generated.squeeze().tolist())
+        output_text = decode_ids(tokenizer, generated.squeeze().tolist())
 
     return output_text
 
@@ -191,6 +190,7 @@ def evaluate_model(
     model: GPT,
     prompts: list,
     device: torch.device,
+    tokenizer,
     max_new_tokens: int = 100,
     temperature: float = 0.7,
     top_k: int = None,
@@ -214,7 +214,9 @@ def evaluate_model(
 
     print("\nGenerating text samples...")
     for prompt in prompts:
-        text = generate_text(model, prompt, device, max_new_tokens, temperature, top_k)
+        text = generate_text(
+            model, prompt, device, tokenizer, max_new_tokens, temperature, top_k
+        )
         generated_texts.append(text)
 
     diversity_metrics = compute_diversity(generated_texts)
@@ -324,10 +326,12 @@ def main():
     print("TEXT GENERATION EVALUATION")
     print("=" * 60)
 
+    tokenizer = load_tokenizer(config["data"]["tokenizer_json"])
     eval_results = evaluate_model(
         model,
         prompts,
         device,
+        tokenizer,
         max_new_tokens=max_new_tokens,
         temperature=temperature,
         top_k=top_k,
@@ -353,21 +357,25 @@ def main():
     # Calculate perplexity
     if not args.skip_perplexity:
         data_cfg = config["data"]
-        if check_data_ready(data_cfg["train_bin"], data_cfg["validation_bin"]):
-            print("\n" + "=" * 60)
-            print("PERPLEXITY EVALUATION")
-            print("=" * 60)
+        mixture = MixtureDataset(
+            wikipedia_jsonl=data_cfg["wikipedia_jsonl"],
+            openwebtext_jsonl=data_cfg["openwebtext_jsonl"],
+            wikiratio=data_cfg.get("wikiratio", 0.6),
+        )
+        tokenizer = load_tokenizer(data_cfg["tokenizer_json"])
 
-            losses = estimate_loss(model, config, device, device_type, ctx)
-            train_ppl = calculate_perplexity(losses["train"])
-            val_ppl = calculate_perplexity(losses["val"])
+        print("\n" + "=" * 60)
+        print("PERPLEXITY EVALUATION")
+        print("=" * 60)
 
-            print(f"Training Loss: {losses['train']:.4f}")
-            print(f"Validation Loss: {losses['val']:.4f}")
-            print(f"Training Perplexity: {train_ppl:.4f}")
-            print(f"Validation Perplexity: {val_ppl:.4f}")
-        else:
-            print("\nSkipping perplexity evaluation (data files not found)")
+        losses = estimate_loss(model, config, device, device_type, ctx, mixture, tokenizer)
+        train_ppl = calculate_perplexity(losses["train"])
+        val_ppl = calculate_perplexity(losses["val"])
+
+        print(f"Training Loss: {losses['train']:.4f}")
+        print(f"Validation Loss: {losses['val']:.4f}")
+        print(f"Training Perplexity: {train_ppl:.4f}")
+        print(f"Validation Perplexity: {val_ppl:.4f}")
 
     print("\n" + "=" * 60)
     print("Evaluation complete!")
